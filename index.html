@@ -75,7 +75,7 @@ h3{font-size:15px;margin:0}
 .btn.ghost{background:transparent;border-color:transparent;color:var(--accent);padding:6px 8px}
 .btn:disabled{opacity:.55;cursor:wait}
 label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);font-weight:500}
-input[type=date],input[type=text],input[type=email],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0}
+input[type=date],input[type=text],input[type=email],input[type=password],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0}
 textarea{width:100%;min-height:80px;resize:vertical}
 .row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
 .muted{color:var(--muted)}
@@ -325,7 +325,13 @@ function call(action, payload){
   if (!API_URL) return Promise.reject(new Error('Informe o endereço do sistema.'));
   return fetch(API_URL, { method:'POST', body: JSON.stringify({ action, payload, token: lsGet('pw_token') }) })
     .then(r => r.json(), () => { throw new Error('Não foi possível falar com o sistema. Confira o endereço e a sua internet.'); })
-    .then(r => { if (!r.ok) throw new Error(r.erro); return r; });
+    .then(r => {
+      if (!r.ok) {
+        if (/^Sessão encerrada/.test(r.erro) && action !== 'login') { lsSet('pw_token', ''); const d = $('#dlg'); if (d.open) d.close(); loginExterno(r.erro); }
+        throw new Error(r.erro);
+      }
+      return r;
+    });
 }
 
 /* ===== Utilidades ===== */
@@ -1720,11 +1726,11 @@ function cfgGeral(){
 function cfgEquipe(){
   const E = S.adm.equipe;
   const fl = (on, t) => '<span class="flag' + (on ? ' on' : '') + '">' + t + '</span>';
-  $('#cfgOut').innerHTML = '<section class="panel"><div class="actions" style="justify-content:space-between;margin-bottom:12px"><p class="small muted" style="margin:0">O e-mail é como o app reconhece quem entrou. Quem tem registros é inativado, não excluído.</p><button class="btn primary" id="ceNovo">Adicionar pessoa</button></div>' +
+  $('#cfgOut').innerHTML = '<section class="panel"><div class="actions" style="justify-content:space-between;margin-bottom:12px"><p class="small muted" style="margin:0">Cada pessoa entra com o e-mail (ou usuário) e cria a senha no primeiro acesso. Quem tem registros é inativado, não excluído.</p><button class="btn primary" id="ceNovo">Adicionar pessoa</button></div>' +
     '<div class="tbl-wrap"><table class="lista"><thead><tr><th>Pessoa</th><th>E-mail</th><th>Perfil</th><th>Permissões</th><th style="text-align:right">Registros</th></tr></thead><tbody>' +
     E.map(e => '<tr class="click' + (e.ativa ? '' : ' inativo') + '" data-ce="' + esc(e.nome) + '"><td><b>' + esc(e.nome) + '</b><span class="when">' + esc(e.funcao || '') + (e.ativa ? '' : ' · inativa') + '</span></td>' +
       '<td class="small">' + (e.email ? esc(e.email) : '<span class="ruim">sem e-mail</span>') + '</td><td>' + esc(e.perfil) + '</td>' +
-      '<td>' + (e.ativa && !e.token_app ? '<span class="flag">sem código</span>' : '') + fl(e.participa_ranking, 'ranking') + fl(e.elegivel_bonus, 'bônus') + fl(e.ve_estornos, 'vê estornos') + fl(e.aprova_budget, 'aprova Budget') + fl(e.admin, 'administra') + '</td>' +
+      '<td>' + (e.ativa && !e.tem_senha ? '<span class="flag">sem senha ainda</span>' : '') + (e.ativa && !e.email && !e.login ? '<span class="flag">sem e-mail/usuário</span>' : '') + fl(e.participa_ranking, 'ranking') + fl(e.elegivel_bonus, 'bônus') + fl(e.ve_estornos, 'vê estornos') + fl(e.aprova_budget, 'aprova Budget') + fl(e.admin, 'administra') + '</td>' +
       '<td style="text-align:right">' + fmtN(e.registros, 0) + '</td></tr>').join('') + '</tbody></table></div></section>';
   $('#ceNovo').addEventListener('click', () => editarMembro(null));
   $$('[data-ce]').forEach(tr => tr.addEventListener('click', () => editarMembro(E.find(e => e.nome === tr.dataset.ce))));
@@ -1743,16 +1749,17 @@ function editarMembro(m){
     '<label class="f">Desde<input type="date" id="mDesde" value="' + esc(m.desde || '') + '"></label>' +
     chk('mAtiva', 'Ativa', m.ativa, '(sem isso, entra como visualizar)') + chk('mRank', 'Participa do ranking', m.participa_ranking) + chk('mBonus', 'Elegível ao bônus', m.elegivel_bonus) +
     chk('mEst', 'Vê os dados de estorno (CPF e PIX)', m.ve_estornos) + chk('mBud', 'Aprova o Budget CS', m.aprova_budget) + chk('mAdm', 'Administra o sistema (acessa esta Central)', m.admin) + '</div>' +
-    (novo ? '<p class="small muted">O código de acesso é gerado ao salvar.</p>' : '<div class="editando" style="margin-top:14px">Código de acesso ao app: <b id="mTok" style="font-family:var(--display);font-size:18px;letter-spacing:1px">' + esc(m.token_app || '—') + '</b> ' +
-      '<button class="lnk small" id="mCopiar">copiar</button> · <button class="lnk small" id="mNovoTok">gerar outro</button><div class="hint">Mande só para a própria pessoa. Gerar outro desativa o código antigo na hora.</div></div>'),
+    (novo ? '<p class="small muted">No primeiro acesso ao app, a pessoa entra com o e-mail (ou usuário) e cria a própria senha.</p>' :
+      '<div class="editando" style="margin-top:14px">Acesso ao app: <b>' + (m.tem_senha ? 'senha criada' : 'ainda não criou a senha') + '</b>' +
+      (m.tem_senha ? ' · <button class="lnk small" id="mReset">resetar senha</button><div class="hint">Resetar tira a pessoa do app em todos os aparelhos. No próximo acesso, ela cria uma senha nova.</div>' : '<div class="hint">Ela entra com ' + esc(m.email || m.login || 'o e-mail cadastrado') + ' e cria a senha no primeiro acesso.</div>') + '</div>'),
     (!novo && !m.registros ? '<button class="btn" id="mDel" style="color:var(--crit)">Excluir</button>' : '') + '<button class="btn primary" id="mSalvar">Salvar</button>');
   $('#mSalvar', d).addEventListener('click', () => {
     const membro = { nome: $('#mNome', d).value, funcao: $('#mFunc', d).value, email: $('#mEmail', d).value, login: $('#mLogin', d).value, perfil: $('#mPerfil', d).value, desde: $('#mDesde', d).value,
       ativa: $('#mAtiva', d).checked, participa_ranking: $('#mRank', d).checked, elegivel_bonus: $('#mBonus', d).checked, ve_estornos: $('#mEst', d).checked, aprova_budget: $('#mBud', d).checked, admin: $('#mAdm', d).checked };
     call('saveMembro', { membro: membro, original: novo ? '' : m.nome }).then(() => recarregarCfg('Pessoa salva.')).catch(e => toast(e.message, true));
   });
-  if ($('#mCopiar', d)) $('#mCopiar', d).addEventListener('click', () => { const t = $('#mTok', d).textContent; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Código copiado.'), () => toast('Copie o código: ' + t)); });
-  if ($('#mNovoTok', d)) $('#mNovoTok', d).addEventListener('click', () => call('novoToken', { nome: m.nome }).then(r => { $('#mTok', d).textContent = r.token; m.token_app = r.token; toast('Código novo gerado. O antigo não funciona mais.'); }).catch(e => toast(e.message, true)));
+  if ($('#mReset', d)) $('#mReset', d).addEventListener('click', () => confirmar('Resetar senha', '<p>A senha de <b>' + esc(m.nome) + '</b> será apagada e ela sairá do app em todos os aparelhos. No próximo acesso, ela cria uma senha nova.</p>', 'Resetar',
+    () => call('resetSenha', { nome: m.nome }).then(() => recarregarCfg('Senha resetada.')).catch(e => toast(e.message, true))));
   if ($('#mDel', d)) $('#mDel', d).addEventListener('click', () => confirmar('Excluir pessoa', '<p><b>' + esc(m.nome) + '</b> não tem nenhum registro e será excluída.</p>', 'Excluir',
     () => call('deleteMembro', { nome: m.nome }).then(() => recarregarCfg('Pessoa excluída.')).catch(e => toast(e.message, true))));
 }
@@ -1760,22 +1767,66 @@ function editarMembro(m){
 /* ===== Início ===== */
 function loginExterno(msg){
   $$('.nav').forEach(b => { b.hidden = true; });
+  $('#sheetLink').hidden = true; ['#btnSair', '#btnSenha'].forEach(id => { if ($(id)) $(id).remove(); }); $('#whoami').textContent = '';
   $('#main').innerHTML = '<div class="panel" style="max-width:440px;margin:40px auto"><h1 style="margin-bottom:8px">Entrar</h1>' +
-    (msg ? '<p class="ruim small">' + esc(msg) + '</p>' : '<p class="sub" style="margin-bottom:14px">Use o código de acesso que a gestora te passou.</p>') +
-    '<div class="filters">' +
+    (msg ? '<p class="ruim small">' + esc(msg) + '</p>' : '<p class="sub" style="margin-bottom:14px">Use o seu e-mail da Cellfy (ou seu usuário) e a sua senha. No primeiro acesso, você cria a senha.</p>') +
+    '<div class="filters" id="lgBox">' +
     '<label class="f">Endereço do sistema<input type="text" id="lgUrl" value="' + esc(lsGet('pw_url') || '') + '" placeholder="https://script.google.com/macros/s/.../exec"></label>' +
-    '<label class="f">Seu código de acesso<input type="text" id="lgTok" autocomplete="off" style="text-transform:uppercase"></label>' +
+    '<label class="f">E-mail ou usuário<input type="text" id="lgUser" autocomplete="username" value="' + esc(lsGet('pw_login') || '') + '"></label>' +
+    '<label class="f">Senha<input type="password" id="lgSenha" autocomplete="current-password"></label>' +
     '<button class="btn primary" id="lgBtn">Entrar</button></div>' +
-    '<p class="small muted" style="margin:12px 0 0">O endereço só precisa ser colado uma vez neste computador.</p></div>';
+    '<p class="small muted" style="margin:12px 0 0">O endereço do sistema só precisa ser colado uma vez neste computador. Esqueceu a senha? Peça à gestora para resetar.</p></div>';
+  if (lsGet('pw_url')) setTimeout(() => (lsGet('pw_login') ? $('#lgSenha') : $('#lgUser')).focus(), 0);
+  const guardarUrl = () => {
+    const url = $('#lgUrl').value.trim();
+    if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) { toast('O endereço precisa começar com https://script.google.com e terminar em /exec.', true); return false; }
+    lsSet('pw_url', url); API_URL = url; return true;
+  };
   const entrar = () => {
-    const url = $('#lgUrl').value.trim(), tok = $('#lgTok').value.trim().toUpperCase();
-    if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) return toast('O endereço precisa começar com https://script.google.com e terminar em /exec.', true);
-    if (!tok) return toast('Digite o seu código de acesso.', true);
-    lsSet('pw_url', url); lsSet('pw_token', tok); API_URL = url;
-    $('#lgBtn').disabled = true; iniciar();
+    if (!guardarUrl()) return;
+    const user = $('#lgUser').value.trim();
+    if (!user) return toast('Digite o seu e-mail ou usuário.', true);
+    const btn = $('#lgBtn'); btn.disabled = true; btn.textContent = 'Entrando';
+    call('login', { usuario: user, senha: $('#lgSenha').value }).then(r => {
+      lsSet('pw_login', user);
+      if (r.primeiroAcesso) return criarSenha(user, r.nome);
+      lsSet('pw_token', r.token); iniciar();
+    }).catch(e => { btn.disabled = false; btn.textContent = 'Entrar'; toast(e.message, true); });
   };
   $('#lgBtn').addEventListener('click', entrar);
-  $('#lgTok').addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); });
+  ['#lgUser', '#lgSenha'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') entrar(); }));
+}
+/** Primeiro acesso: a pessoa cria a própria senha. */
+function criarSenha(user, nome){
+  $('#lgBox').innerHTML = '<p style="margin:0">Olá, <b>' + esc(nome) + '</b>! Este é o seu primeiro acesso. Crie a sua senha (mínimo de 6 caracteres).</p>' +
+    '<label class="f">Nova senha<input type="password" id="lgNova" autocomplete="new-password"></label>' +
+    '<label class="f">Repita a senha<input type="password" id="lgNova2" autocomplete="new-password"></label>' +
+    '<button class="btn primary" id="lgCriar">Criar senha e entrar</button>';
+  $('#lgNova').focus();
+  const criar = () => {
+    const a = $('#lgNova').value, b = $('#lgNova2').value;
+    if (a.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres.', true);
+    if (a !== b) return toast('As duas senhas não estão iguais.', true);
+    const btn = $('#lgCriar'); btn.disabled = true;
+    call('login', { usuario: user, novaSenha: a }).then(r => { lsSet('pw_token', r.token); toast('Senha criada. Bem-vinda!'); iniciar(); })
+      .catch(e => { btn.disabled = false; toast(e.message, true); });
+  };
+  $('#lgCriar').addEventListener('click', criar);
+  $('#lgNova2').addEventListener('keydown', e => { if (e.key === 'Enter') criar(); });
+}
+function trocarMinhaSenha(){
+  const d = $('#dlg'); d.className = '';
+  d.innerHTML = '<div class="dlg-head"><h2 style="margin:0 0 12px">Trocar minha senha</h2><button class="x" aria-label="Fechar">×</button></div><div class="filters">' +
+    '<label class="f">Senha atual<input type="password" id="tsAtual" autocomplete="current-password"></label>' +
+    '<label class="f">Nova senha<input type="password" id="tsNova" autocomplete="new-password"></label>' +
+    '<label class="f">Repita a nova senha<input type="password" id="tsNova2" autocomplete="new-password"></label></div>' +
+    '<div class="actions" style="justify-content:flex-end;margin-top:16px"><button class="btn primary" id="tsOk">Trocar senha</button></div>';
+  $('.x', d).addEventListener('click', () => d.close());
+  $('#tsOk', d).addEventListener('click', () => {
+    if ($('#tsNova', d).value !== $('#tsNova2', d).value) return toast('As duas senhas novas não estão iguais.', true);
+    call('trocarSenha', { atual: $('#tsAtual', d).value, nova: $('#tsNova', d).value }).then(() => { d.close(); toast('Senha trocada.'); }).catch(e => toast(e.message, true));
+  });
+  d.showModal();
 }
 function sair(){ lsSet('pw_token', ''); location.reload(); }
 function iniciar(){
@@ -1785,8 +1836,11 @@ function iniciar(){
     S.boot = r;
     $('#brand').textContent = r.cfg.nome_sistema; document.title = (r.cfg.nome_sistema ? r.cfg.nome_sistema + ' · ' : '') + 'Cellfy';
     $('#whoami').textContent = S.boot.usuario.nome;
-    $('#sheetLink').href = r.planilhaUrl;
-    if (externo && !$('#btnSair')) { const bt = document.createElement('button'); bt.id = 'btnSair'; bt.className = 'lnk small'; bt.style.color = '#B9C4CF'; bt.style.display = 'block'; bt.style.marginTop = '8px'; bt.textContent = 'Sair'; bt.addEventListener('click', sair); $('.rail-foot').appendChild(bt); }
+    $('#sheetLink').href = r.planilhaUrl; $('#sheetLink').hidden = false;
+    if (externo && !$('#btnSair')) {
+      const mk = (id, txt, fn) => { const bt = document.createElement('button'); bt.id = id; bt.className = 'lnk small'; bt.style.color = '#B9C4CF'; bt.style.display = 'block'; bt.style.marginTop = '8px'; bt.textContent = txt; bt.addEventListener('click', fn); $('.rail-foot').appendChild(bt); };
+      mk('btnSenha', 'Trocar minha senha', trocarMinhaSenha); mk('btnSair', 'Sair', sair);
+    }
     const perfil = S.boot.usuario.perfil || 'visualizar';
     const visiveis = { completo: ['painel','analises','lancar','equipe','cancel','relatorio'], cancelamentos: ['cancel'], visualizar: ['painel','analises','relatorio'] }[perfil] || ['painel','analises','relatorio'];
     if (S.boot.usuario.admin) visiveis.push('config');
